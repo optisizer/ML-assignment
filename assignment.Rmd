@@ -1,0 +1,159 @@
+---
+title: "Weight-lifting classified"
+output: html_document
+date: "Thursday, November 20, 2014"
+---
+### This assignement will try to answer the question:
+
+### "Is it possible to use machine learning and quantitative parameters to classify good or bad form or type of error performed in a weight-lifting exercise?"
+
+#### Abstract
+
+This assignment correctly classifies 20 samples of a weight-lifting exercise, using 52 meassured features on five different pre-determined classifications, on six individuals. This confirms the findings of the original researchers, which published their research and findings here:
+
+```{r abstract, echo=TRUE}
+docURL <- "http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf"
+```
+
+The cross validation analysis on out-of-sample data indicates an accuracy of above 99%, as well as above 99% values for the precision and recall error meassurements.
+
+The training (and consequently the final prediction) of the model was performed utelizing a random forest algorithm for machine learning. Aside from scrubbing the data for variables holding no data, no additional feature selection was done.
+
+While this report confirms the "doability" of the original research it does not reproduce it exactly, nor does it improve on it in terms of interpretability and speed. It does, however, slightly improve the accuracy, but as the accuracy of the original model already was quite high (at 98.2%), it is debatable whether this is useful, given this alternativ model's lower interpretability and speed.
+
+#### Methodology
+
+The overall methodology for this assignment mimics the one we have followed in class. That is, perform in sequence the following steps:
+
+1. Form a proper question or hypothesis in quantitative terms.
+2. Prepare proper input data.
+3. Decide on features and why and how to deduct from or add to an original set.
+4. Decide on the algorithm to use for training, cross validation, testing, and predicting.
+5. Train the model and derived parameters for features to use in prediction.
+6. Cross validate and evaluate (eventually repeat from step 3).
+7. Run final model on the (untouched) test data and evaluate.
+8. Run predictions on the test data and/or additional unseen data.
+
+A deliberate effort was also made to consider various types of trade offs between the accuracy of the final model and other factors, such as interpretability, scalability, speed, simplicity and robustness. However, in order to finish the assignment with full score, no progress was made in this regard (see Conclusions and Suggested future research).
+
+#### Input data
+
+Collecting the raw input data for the assignment was a simple execution in following assignment instructions, downloading files with provided URL, followed by reading it into r.
+
+```{r initial, echo=TRUE}
+trainURL <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testURL <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+# download.file(trainURL, destfile="lifting.csv")
+# download.file(testURL, destfile="testLift.csv")
+```
+
+```{r setupData, echo=TRUE, warning=FALSE, message=FALSE}
+library(caret); set.seed(428); library(randomForest)
+lifting <- read.csv("lifting.csv"); testLift <- read.csv("testLift.csv")
+```
+
+#### Feature selection
+
+The first thing to do was to read through the original research paper to get a feel for the performance of the original model and possible also see which variables the authors had selected. The original intention was to reproduce and (hopefully) confirm their finding, possibly also improve the performance and/or the speed of the training and prediction runs. However, that was not possible, as the data was rather cryptically labeled and the paper did not refere to the variables in the CSV file with their original variable names. So, next step was to simply clean the data, following these steps:
+
+- Do away with all columns that seem to contain labels rather than meassured variables
+- Do away with all columns that held mostly NA values
+- Use the nearZeroVar function to do away with values it deemed would not add to the performance of the model.
+
+This resulted in a test-data file with 19622 observations over 53 variables (or 52 features for training the model). There was no need for additional data munging or scrubbing such as imputing missing values or cleaning out NA values.
+
+At this point a closer inspection of these variables could have resulted in extra variables added as polynomial features to the existing variables. However, the fact that the original model held a total of 17 variables (relative this model's 52) would indicate that more variables could be deducted rather than added, if not for predictive performance so for speed and ease of use.
+
+```{r featureselect, echo=TRUE}
+testLift <- testLift[ , 8:160]; lifting <- lifting[ , 8:160]
+testLift <- testLift[colSums(is.na(lifting)) == 0]
+lifting <- lifting[colSums(is.na(lifting)) == 0]
+doaway <- nzv(lifting, freqCut = 95/5, uniqueCut = 10, saveMetrics = FALSE)
+testLift <- testLift[ , -doaway]; lifting <- lifting[ , -doaway]
+```
+
+#### Model (algorithm) selection
+
+Because of the size of the test-data file and the time it will take to train models on it while being in the exploratory phase, looking to decide which model to use, I decided to use 10% of it for play and exploratory purposes, of which 70% was allocated to training and 30% to testing.
+
+```{r extractPlay, echo=TRUE}
+extract <- createDataPartition(y=lifting$classe, p=0.1, list=FALSE)
+playLift <- lifting[extract, ]; lifting <- lifting[-extract, ]
+extract <- createDataPartition(y=playLift$classe, p=0.7, list=FALSE)
+trainPlay <- playLift[extract, ]; crossPlay <- playLift[-extract, ]
+```
+
+##### Random forest
+
+A few different algorithms was then tested on this "play" data, mostly embedded inside the train function from the caret package. However, as the train function seemed to add significant overhead in terms of execution time, I decided to run the algorithms directly as separate functions. When doing so I found that the randomForest function not only ran fast, but it was the easiest one to implement with a minimum of function parameters to tweak. Other likely good models (algorithms) in r for this problem include: gbm (boosting with trees), and ada and adaboost.
+
+##### Pre processing and PCA
+
+Pre processing includes methods for scaling and centering the data. This is not necessary for randomForest models, so this step was never considered in its own right. However, the caret package includes the function preProcess with the method pca (Principal Component Analysis), which analyses and narrows down the possible features in the training data. In doing so, the pca process also centers and scales the data. That said, during this step no additional pre processing or narrowing of the data was performed.
+
+#### The final train run
+
+Before the final train run on the true training data, 30% of it was put aside for cross validation of the performance before the final test run on the assigned test data. The cross validation data was extracted with a random data partitioning. This method was selected for its simplicity relative other methods, such as the k fold method, or leave-one-out in terms of test subjects. (The latter, would likely improve the robustness of the model when tested not only un previouslu unseen data on known test subjects, but when tested on unknown test subjects as well.)
+The data collected in the modFit variable represent the in-sample accuracy of the model, and will be used in the Cross validation and error analysis, below, to compare against the accuracy of the cross validation set.
+
+```{r runTrue, echo=TRUE, comment=""}
+extract <- createDataPartition(y=lifting$classe, p=0.7, list=FALSE)
+trainLift <- lifting[extract, ]; crossLift <- lifting[-extract, ]
+modFit <- randomForest(classe ~ ., data=trainLift); modFit
+```
+
+#### Cross validation error analysis
+
+For this analysis a few in-sample error values were calculated. That is meassurements on how well the trainging data in variable trainLift predicts on itself. Specifically values for Accuracy, Precision and Recall were calculated. Precision and Recall were calculated both for individual classes and as mean totals.
+
+- **Accuracy** = total percentage correct predictions
+- **Precision** = correct positive predictions, given all positive predictions
+- **Recall** = correct positive predictions, given all positive cases
+
+##### In-sample (training) data
+
+```{r errorCheck1, echo=TRUE, comment=""}
+modFit$confusion
+correct <- numeric(5); precision <- numeric(6); recall <- numeric(6)
+classes <-  c("A", "B", "C", "D", "E", "Mean")
+names(precision) <- classes; names(recall) <- classes
+for( i in 1:5)  {
+    correct[i] <- modFit$confusion[i, i]
+    precision[i] <- correct[i] / sum(modFit$confusion[i, ])
+    recall[i] <- correct[i] / sum(modFit$confusion[, i])
+}
+precision[6] <- mean(precision[-6]); recall[6] <- mean(recall[-6])
+accuracy <- sum(correct) / sum(modFit$confusion[, -6])
+accuracy
+precision # This is Positive Predictive Value
+recall    # This is Sensitivity
+```
+
+```{r text, echo=FALSE}
+pr <- precision[6]; re <- recall[6]
+```
+
+##### Out-of-sample (cross validation) data
+
+Next, the confusionMatrix function was applied to the cross validation data in crossLift. The overall accuracy and the Precision and Recall values for the individual classes are given by this function. The mean Precision and Recall values are calculated separately.
+
+```{r errorCheck2, echo=TRUE, comment=""}
+confuse <- confusionMatrix(crossLift$classe, predict(modFit, crossLift))
+confuse
+mean(confuse$byClass[, 3]) # This is Positive Predictive Value (aka Precision)
+mean(confuse$byClass[, 1]) # This is Sensitivity (aka Recall)
+```
+
+##### Conclusions
+
+- The Accuracy of the in-sample prediction comes out to `r accuracy`, which is slightly lower than the accuracy on the cross validation data at `r confuse$overall[1]`.
+- The mean Precision for the in-sample prediction, at `r pr` is slightly lower than the prediction on the cross validation data, at `r mean(confuse$byClass[, 3])`.
+- The mean Recall for the in-sample prediction, at `r re` also is slightly lower than the prediction on the cross validation data, at `r mean(confuse$byClass[, 1])`.
+- For both the in-sample and out-of-sample tests, all values also are very high, surpassing 99%.
+
+Most likely we have built a very good and accurate model, with a high likelyhood to continue to do well when predicting on previously unseen data, However, the fact that the out-of-sample data is slightly better than the in-sample data indicates that we could in fact benefit from reducing the number of features. This could increase the error rate somewhat but it would also improve the speed and the interpretability, which could be a positive trade off. The fact that the original model consisted of onle 17 features is an indication of this. (That said, a post-assignment test with pca'd data, narrowing down the features to 25, did not result in 100% correct predictions on the test data)
+
+#### Suggested future research
+
+- Lower the number of features used, by utelizing PCA or other means for finding variables with low variance, variables with high covariance, or other variables with low explanatory value.
+- Partitioning the training, cross validation and test data according to the leave-on-out method in terms of test subjects, for higher robustenss when applied to previously unseen indivduals.
